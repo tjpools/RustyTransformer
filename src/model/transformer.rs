@@ -1,4 +1,6 @@
-use candle_core::{Result, Tensor};
+use std::path::Path;
+
+use candle_core::{DType, Device, Result, Tensor};
 use candle_nn::{LayerNorm, Linear, Module, VarBuilder, layer_norm, linear};
 
 use super::{block::TransformerBlock, embedding::InputEmbedding};
@@ -30,6 +32,18 @@ impl Transformer {
         })
     }
 
+    pub fn from_safetensors<P: AsRef<Path>>(
+        config: &TransformerConfig,
+        path: P,
+        dtype: DType,
+        device: &Device,
+    ) -> Result<Self> {
+        let paths = [path];
+        // SAFETY: The mapped file is only read by Candle for the builder's lifetime.
+        let builder = unsafe { VarBuilder::from_mmaped_safetensors(&paths, dtype, device)? };
+        Self::new(config, builder)
+    }
+
     pub fn forward(&self, token_ids: &Tensor) -> Result<Tensor> {
         let mut hidden = self.embedding.forward(token_ids)?;
         for block in &self.blocks {
@@ -42,6 +56,8 @@ impl Transformer {
 
 #[cfg(test)]
 mod tests {
+    use std::{fs, path::PathBuf};
+
     use candle_core::{DType, Device, Tensor};
     use candle_nn::{VarBuilder, VarMap};
 
@@ -60,6 +76,29 @@ mod tests {
         let logits = model.forward(&tokens)?;
 
         assert_eq!(logits.dims(), &[1, 4, config.vocab_size]);
+        Ok(())
+    }
+
+    #[test]
+    fn safetensors_round_trip_preserves_logits() -> candle_core::Result<()> {
+        let device = Device::Cpu;
+        let config = TransformerConfig::tiny();
+        let variables = VarMap::new();
+        let builder = VarBuilder::from_varmap(&variables, DType::F32, &device);
+        let original = Transformer::new(&config, builder)?;
+        let tokens = Tensor::new(&[[1_u32, 2, 3, 4]], &device)?;
+        let expected = original.forward(&tokens)?.to_vec3::<f32>()?;
+        let checkpoint = PathBuf::from(std::env::temp_dir()).join(format!(
+            "rusty-transformer-{}-round-trip.safetensors",
+            std::process::id()
+        ));
+
+        variables.save(&checkpoint)?;
+        let loaded = Transformer::from_safetensors(&config, &checkpoint, DType::F32, &device)?;
+        let actual = loaded.forward(&tokens)?.to_vec3::<f32>()?;
+        fs::remove_file(checkpoint)?;
+
+        assert_eq!(actual, expected);
         Ok(())
     }
 }

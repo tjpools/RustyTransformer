@@ -290,7 +290,8 @@ Run them with:
 cargo test
 ```
 
-These tests establish causal masking and end-to-end shape compatibility. They do
+These tests establish causal masking, end-to-end shape compatibility, and exact
+logit preservation after saving and reloading a SafeTensors checkpoint. They do
 not yet test exact attention values, sequence-length rejection, invalid configs,
 multiple batches, or learned behavior.
 
@@ -301,7 +302,8 @@ language-model application:
 
 - no tokenizer that maps text to token IDs
 - no dataset, loss function, backpropagation, optimizer, or training loop
-- no checkpoint loading or saving
+- no training workflow that produces a learned checkpoint; inference can load a
+  matching SafeTensors file with `--weights`
 - no next-token sampler or autoregressive generation loop
 - no padding mask for variable-length examples
 - no dropout or training/evaluation mode distinction
@@ -320,7 +322,9 @@ system, but they are not required to study the architecture itself.
 3. Construct a small causal mask by hand and compare it with the unit test.
 4. Trace one query row through score scaling, masking, softmax, and value mixing.
 5. Add a test for an overlong sequence and one for a batch larger than one.
-6. Add greedy next-token selection, while remembering that an untrained model's
+6. Inspect the names and shapes in a saved SafeTensors checkpoint and match them
+  to each `VarBuilder::pp` prefix in the model constructors.
+7. Add greedy next-token selection, while remembering that an untrained model's
    selected tokens will be arbitrary.
 
 The central mental model is simple: embeddings create a residual stream of width
